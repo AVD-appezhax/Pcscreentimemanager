@@ -552,13 +552,16 @@ class StudyLockApp(tk.Tk):
         self.duration_var = tk.IntVar(value=60)
         self.max_break_var = tk.IntVar(value=MAX_BREAK_MINUTES)
         self._number_field(settings, "Study minutes", self.duration_var, 0, 1, 480)
-        self._number_field(settings, "Max break minutes", self.max_break_var, 1, 1, MAX_BREAK_MINUTES)
+        self._number_field(settings, "Break length minutes (max 10)", self.max_break_var, 1, 1, MAX_BREAK_MINUTES)
 
         suggestion_bar = ttk.Frame(root)
         suggestion_bar.pack(fill="x", pady=(0, 8))
         self.scan_button = ttk.Button(suggestion_bar, text="Scan PC for distracting apps", command=self._scan_apps)
         self.scan_button.pack(side="left")
-        ttk.Button(suggestion_bar, text="Add suggested websites", command=self._add_site_presets).pack(side="left", padx=8)
+        self.save_apps_button = ttk.Button(suggestion_bar, text="Save app list", command=self._save_app_list)
+        self.save_apps_button.pack(side="left", padx=(8, 0))
+        self.add_sites_button = ttk.Button(suggestion_bar, text="Add suggested websites", command=self._add_site_presets)
+        self.add_sites_button.pack(side="left", padx=8)
         self.suggestion_var = tk.StringVar(value="Suggestions are editable before you start.")
         ttk.Label(suggestion_bar, textvariable=self.suggestion_var).pack(side="left", padx=8)
 
@@ -587,7 +590,7 @@ class StudyLockApp(tk.Tk):
         actions.pack(fill="x")
         self.start_button = ttk.Button(actions, text="Start study session", command=self._start_session)
         self.start_button.pack(side="left")
-        self.break_button = ttk.Button(actions, text="Start break", command=self._start_break, state="disabled")
+        self.break_button = ttk.Button(actions, text="Take break now", command=self._start_break, state="disabled")
         self.break_button.pack(side="left", padx=8)
         self.resume_button = ttk.Button(actions, text="Resume now", command=self._resume_from_break, state="disabled")
         self.resume_button.pack(side="left")
@@ -627,8 +630,20 @@ class StudyLockApp(tk.Tk):
         self.config_data.save()
         self.status_var.set("Settings saved")
 
+    def _save_app_list(self) -> None:
+        try:
+            blocked_apps = [normalize_app_name(x) for x in split_lines(self.apps_text.get("1.0", "end"))]
+            self.config_data = self._read_form()
+            self.config_data.blocked_apps = unique_sorted(blocked_apps)
+            self.config_data.save()
+            self.status_var.set("App list saved")
+            self.suggestion_var.set("Saved app list. It will load next time you open StudyLock.")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Could not save app list:\n{exc}")
+
     def _scan_apps(self) -> None:
         self.scan_button.configure(state="disabled")
+        self.save_apps_button.configure(state="disabled")
         self.suggestion_var.set("Scanning common app folders for distracting .exe files...")
         threading.Thread(target=self._scan_apps_worker, daemon=True).start()
 
@@ -642,10 +657,12 @@ class StudyLockApp(tk.Tk):
     def _finish_app_scan(self, matches: list[str]) -> None:
         merge_text(self.apps_text, matches)
         self.scan_button.configure(state="normal")
-        self.suggestion_var.set(f"Added {len(matches)} suggested app entries. Edit the list before starting.")
+        self.save_apps_button.configure(state="normal")
+        self.suggestion_var.set(f"Added {len(matches)} suggested app entries. Edit them, then click Save app list.")
 
     def _scan_failed(self, exc: Exception) -> None:
         self.scan_button.configure(state="normal")
+        self.save_apps_button.configure(state="normal")
         self.suggestion_var.set(f"Scan failed: {exc}")
 
     def _add_site_presets(self) -> None:
@@ -692,6 +709,8 @@ class StudyLockApp(tk.Tk):
         state = "normal" if enabled else "disabled"
         self.start_button.configure(state=state)
         self.scan_button.configure(state=state)
+        self.save_apps_button.configure(state=state)
+        self.add_sites_button.configure(state=state)
         self.apps_text.configure(state=state)
         self.sites_text.configure(state=state)
         self.break_button.configure(state="disabled" if enabled else "normal")
@@ -730,7 +749,8 @@ class StudyLockApp(tk.Tk):
         self.break_until = datetime.now() + timedelta(minutes=max_minutes)
         self.break_button.configure(state="disabled")
         self.resume_button.configure(state="normal")
-        self.status_var.set(f"Break active for up to {max_minutes} minutes.")
+        minute_label = "minute" if max_minutes == 1 else "minutes"
+        self.status_var.set(f"Break active for up to {max_minutes} {minute_label}. It ends automatically.")
 
     def _resume_from_break(self) -> None:
         if not self.session_active:
