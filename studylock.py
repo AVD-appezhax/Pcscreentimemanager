@@ -21,7 +21,23 @@ RUNONCE_KEY = r"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce"
 HOSTS_BEGIN = "# STUDYLOCK-BEGIN"
 HOSTS_END = "# STUDYLOCK-END"
 MAX_BREAK_MINUTES = 10
-SITE_PACK_VERSION = 2
+BREAK_ACTIVATION_DELAY_SECONDS = 30
+SITE_PACK_VERSION = 3
+
+COLORS = {
+    "bg": "#101418",
+    "panel": "#171d24",
+    "panel_alt": "#1f2730",
+    "text": "#eef3f8",
+    "muted": "#9caaba",
+    "accent": "#4f8cff",
+    "accent_hover": "#6ea1ff",
+    "danger": "#ff5f6d",
+    "danger_hover": "#ff7b86",
+    "field": "#0c1117",
+    "border": "#2b3542",
+    "selection": "#294d7a",
+}
 
 DISTRACTING_APP_KEYWORDS = {
     "among us",
@@ -96,9 +112,17 @@ DEFAULT_BLOCKED_SITES = [
     "x.com",
     "twitter.com",
     "threads.net",
+    "bsky.app",
+    "truthsocial.com",
+    "bereal.com",
+    "nextdoor.com",
     "reddit.com",
     "twitch.tv",
     "kick.com",
+    "dailymotion.com",
+    "rumble.com",
+    "odysee.com",
+    "bilibili.com",
     "facebook.com",
     "messenger.com",
     "netflix.com",
@@ -106,13 +130,24 @@ DEFAULT_BLOCKED_SITES = [
     "disneyplus.com",
     "hulu.com",
     "max.com",
+    "peacocktv.com",
+    "paramountplus.com",
+    "tubi.tv",
+    "pluto.tv",
     "crunchyroll.com",
     "funimation.com",
     "9gag.com",
     "buzzfeed.com",
+    "tmz.com",
+    "dailymail.co.uk",
+    "ladbible.com",
+    "bleacherreport.com",
     "pinterest.com",
     "tumblr.com",
     "snapchat.com",
+    "tinder.com",
+    "bumble.com",
+    "hinge.co",
     "discord.com",
     "discord.gg",
     "steampowered.com",
@@ -127,6 +162,11 @@ DEFAULT_BLOCKED_SITES = [
     "minecraft.net",
     "xbox.com",
     "playstation.com",
+    "poki.com",
+    "crazygames.com",
+    "miniclip.com",
+    "kongregate.com",
+    "newgrounds.com",
     "ign.com",
     "gamespot.com",
     "polygon.com",
@@ -137,6 +177,9 @@ DEFAULT_BLOCKED_SITES = [
     "etsy.com",
     "temu.com",
     "shein.com",
+    "aliexpress.com",
+    "depop.com",
+    "vinted.com",
 ]
 
 WEBSITE_PRESETS = DEFAULT_BLOCKED_SITES
@@ -524,14 +567,84 @@ class StudyLockApp(tk.Tk):
         self.session_active = False
         self.session_stop = threading.Event()
         self.unlock_at: datetime | None = None
+        self.break_pending_until: datetime | None = None
         self.break_until: datetime | None = None
         self.hosts_paused = False
         self.hosts_blocker: HostsBlocker | None = None
         self.process_blocker: ProcessBlocker | None = None
 
+        self._configure_theme()
         self._build_ui()
         self._load_form()
         self.protocol("WM_DELETE_WINDOW", self._handle_close)
+
+    def _configure_theme(self) -> None:
+        self.configure(bg=COLORS["bg"])
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        style.configure(".", background=COLORS["bg"], foreground=COLORS["text"], font=("Segoe UI", 10))
+        style.configure("TFrame", background=COLORS["bg"])
+        style.configure("TLabel", background=COLORS["bg"], foreground=COLORS["text"])
+        style.configure("Muted.TLabel", background=COLORS["bg"], foreground=COLORS["muted"])
+        style.configure("Header.TLabel", background=COLORS["bg"], foreground=COLORS["text"], font=("Segoe UI", 22, "bold"))
+        style.configure(
+            "TLabelframe",
+            background=COLORS["panel"],
+            foreground=COLORS["text"],
+            bordercolor=COLORS["border"],
+            relief="solid",
+        )
+        style.configure(
+            "TLabelframe.Label",
+            background=COLORS["panel"],
+            foreground=COLORS["muted"],
+            font=("Segoe UI", 10, "bold"),
+        )
+        style.configure(
+            "TButton",
+            background=COLORS["panel_alt"],
+            foreground=COLORS["text"],
+            bordercolor=COLORS["border"],
+            focusthickness=1,
+            focuscolor=COLORS["accent"],
+            padding=(10, 6),
+        )
+        style.map(
+            "TButton",
+            background=[("active", COLORS["border"]), ("disabled", "#151a20")],
+            foreground=[("disabled", "#657080")],
+        )
+        style.configure("Accent.TButton", background=COLORS["accent"], foreground="#ffffff", bordercolor=COLORS["accent"])
+        style.map("Accent.TButton", background=[("active", COLORS["accent_hover"]), ("disabled", "#263247")])
+        style.configure("Danger.TButton", background=COLORS["danger"], foreground="#ffffff", bordercolor=COLORS["danger"])
+        style.map("Danger.TButton", background=[("active", COLORS["danger_hover"]), ("disabled", "#3a2228")])
+        style.configure(
+            "TSpinbox",
+            fieldbackground=COLORS["field"],
+            background=COLORS["panel_alt"],
+            foreground=COLORS["text"],
+            bordercolor=COLORS["border"],
+            arrowcolor=COLORS["text"],
+        )
+
+    def _style_text(self, widget: tk.Text) -> None:
+        widget.configure(
+            background=COLORS["field"],
+            foreground=COLORS["text"],
+            insertbackground=COLORS["text"],
+            selectbackground=COLORS["selection"],
+            selectforeground=COLORS["text"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=COLORS["border"],
+            highlightcolor=COLORS["accent"],
+            padx=8,
+            pady=8,
+        )
 
     def _build_ui(self) -> None:
         root = ttk.Frame(self, padding=18)
@@ -539,9 +652,9 @@ class StudyLockApp(tk.Tk):
 
         header = ttk.Frame(root)
         header.pack(fill="x")
-        ttk.Label(header, text="StudyLock", font=("Segoe UI", 22, "bold")).pack(side="left")
+        ttk.Label(header, text="StudyLock", style="Header.TLabel").pack(side="left")
         admin_text = "Admin: website blocking enabled" if is_admin() else "Not admin: app blocking only"
-        self.admin_label = ttk.Label(header, text=admin_text)
+        self.admin_label = ttk.Label(header, text=admin_text, style="Muted.TLabel")
         self.admin_label.pack(side="right")
 
         settings = ttk.LabelFrame(root, text="Session")
@@ -575,27 +688,29 @@ class StudyLockApp(tk.Tk):
         ttk.Label(lists, text="Blocked websites, one per line").grid(row=0, column=1, sticky="w", padx=(8, 0))
 
         self.apps_text = tk.Text(lists, height=14, wrap="none", font=("Consolas", 10))
+        self._style_text(self.apps_text)
         self.apps_text.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(4, 0))
         self.sites_text = tk.Text(lists, height=14, wrap="none", font=("Consolas", 10))
+        self._style_text(self.sites_text)
         self.sites_text.grid(row=1, column=1, sticky="nsew", padx=(8, 0), pady=(4, 0))
 
         status_box = ttk.LabelFrame(root, text="Status")
         status_box.pack(fill="x", pady=(8, 10))
         self.status_var = tk.StringVar(value="Ready")
         self.timer_var = tk.StringVar(value="No active study session")
-        ttk.Label(status_box, textvariable=self.status_var).pack(anchor="w", padx=10, pady=(8, 2))
+        ttk.Label(status_box, textvariable=self.status_var, style="Muted.TLabel").pack(anchor="w", padx=10, pady=(8, 2))
         ttk.Label(status_box, textvariable=self.timer_var, font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=(0, 8))
 
         actions = ttk.Frame(root)
         actions.pack(fill="x")
-        self.start_button = ttk.Button(actions, text="Start study session", command=self._start_session)
+        self.start_button = ttk.Button(actions, text="Start study session", command=self._start_session, style="Accent.TButton")
         self.start_button.pack(side="left")
-        self.break_button = ttk.Button(actions, text="Take break now", command=self._start_break, state="disabled")
+        self.break_button = ttk.Button(actions, text="Take break now", command=self._start_break, state="disabled", style="Accent.TButton")
         self.break_button.pack(side="left", padx=8)
         self.resume_button = ttk.Button(actions, text="Resume now", command=self._resume_from_break, state="disabled")
         self.resume_button.pack(side="left")
         ttk.Button(actions, text="Save settings", command=self._save_form).pack(side="left", padx=8)
-        self.exit_button = ttk.Button(actions, text="Emergency exit", command=self._emergency_exit, state="disabled")
+        self.exit_button = ttk.Button(actions, text="Emergency exit", command=self._emergency_exit, state="disabled", style="Danger.TButton")
         self.exit_button.pack(side="right")
         ttk.Button(actions, text="Restore website blocks", command=self._manual_restore).pack(side="right", padx=8)
 
@@ -686,6 +801,7 @@ class StudyLockApp(tk.Tk):
 
         now = datetime.now()
         self.unlock_at = now + timedelta(minutes=self.config_data.duration_minutes)
+        self.break_pending_until = None
         self.break_until = None
         self.hosts_paused = False
         self.session_stop.clear()
@@ -745,7 +861,18 @@ class StudyLockApp(tk.Tk):
     def _start_break(self) -> None:
         if not self.session_active:
             return
+        if self.break_pending_until or (self.break_until and datetime.now() < self.break_until):
+            return
+        self.break_pending_until = datetime.now() + timedelta(seconds=BREAK_ACTIVATION_DELAY_SECONDS)
+        self.break_button.configure(state="disabled")
+        self.resume_button.configure(state="disabled")
+        self.status_var.set("Break requested. Keep studying for 30 seconds before it starts.")
+
+    def _activate_break(self) -> None:
+        if not self.session_active or not self.break_pending_until:
+            return
         max_minutes = min(MAX_BREAK_MINUTES, max(1, int(self.max_break_var.get())))
+        self.break_pending_until = None
         self.break_until = datetime.now() + timedelta(minutes=max_minutes)
         self.break_button.configure(state="disabled")
         self.resume_button.configure(state="normal")
@@ -755,6 +882,7 @@ class StudyLockApp(tk.Tk):
     def _resume_from_break(self) -> None:
         if not self.session_active:
             return
+        self.break_pending_until = None
         self.break_until = None
         self.break_button.configure(state="normal")
         self.resume_button.configure(state="disabled")
@@ -769,10 +897,19 @@ class StudyLockApp(tk.Tk):
         if not self.session_active or not self.unlock_at:
             return
         now = datetime.now()
+        if self.break_pending_until and now >= self.break_pending_until:
+            self._activate_break()
+            now = datetime.now()
+
         remaining = max(0, int((self.unlock_at - now).total_seconds()))
         mins, secs = divmod(remaining, 60)
 
-        if self.break_until and now < self.break_until:
+        if self.break_pending_until:
+            pending_remaining = max(0, int((self.break_pending_until - now).total_seconds()))
+            pmins, psecs = divmod(pending_remaining, 60)
+            self.status_var.set("Break requested. Blocks stay active during the wait.")
+            self.timer_var.set(f"Unlocks in {mins:02d}:{secs:02d}. Break starts in {pmins:02d}:{psecs:02d}.")
+        elif self.break_until and now < self.break_until:
             break_remaining = max(0, int((self.break_until - now).total_seconds()))
             bmins, bsecs = divmod(break_remaining, 60)
             self.status_var.set("Break active. Blocks resume automatically when the break ends.")
@@ -789,6 +926,8 @@ class StudyLockApp(tk.Tk):
         self.session_stop.set()
         self._restore_blocks()
         self.session_active = False
+        self.break_pending_until = None
+        self.break_until = None
         self._set_editing_enabled(True)
         self.status_var.set("Session complete")
         self.timer_var.set("Unlocked")
@@ -836,6 +975,7 @@ class EmergencyExitDialog(tk.Toplevel):
         self.remaining = 15
         self.transient(parent)
         self.grab_set()
+        self.configure(bg=COLORS["bg"])
 
         frame = ttk.Frame(self, padding=18)
         frame.pack(fill="both", expand=True)
