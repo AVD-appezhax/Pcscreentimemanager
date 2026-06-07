@@ -6,7 +6,10 @@ PC Screen Time Manager is a small Windows study app that blocks distracting apps
 
 - Closes blocked apps during study time.
 - Blocks custom websites by adding temporary entries to the Windows hosts file.
-- Suggests distracting apps by scanning common PC app folders for `.exe` files.
+- Starts with broader default blocks for social media, streaming, gaming, shopping, and entertainment sites.
+- Keeps YouTube out of the default block list so study videos remain available.
+- Suggests distracting apps by scanning common PC app folders, Steam libraries, and Epic Games installs for `.exe` files.
+- Ignores wallpaper/background tools while scanning.
 - Adds an editable preset list of distracting websites.
 - Supports manual breaks that you choose during the session, capped at 10 minutes.
 - Supports emergency exit after a 15-second wait.
@@ -22,8 +25,8 @@ Use `run_as_admin.bat` for whole-device website blocking. Windows will show a UA
 ## Notes
 
 - App blocking works for normal user processes by executable name, such as `discord.exe` or `steam.exe`.
-- Website blocking works best with domains like `youtube.com`, `tiktok.com`, or `reddit.com`.
-- The PC scan is a suggestion tool. It looks in common app folders and adds likely distracting executables to the editable app list.
+- Website blocking works best with domains like `tiktok.com`, `instagram.com`, or `reddit.com`.
+- The PC scan is a suggestion tool. It looks in common app folders and game libraries, then adds likely distracting executables to the editable app list.
 - The website suggestions are presets because Windows does not keep a reliable list of every distracting site you visit.
 - Some apps and browsers cache DNS. StudyLock flushes DNS when website blocks are applied or restored, but already-open pages may need to be refreshed.
 - If something goes wrong with website blocking, run StudyLock as admin and click `Restore website blocks`.

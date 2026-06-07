@@ -1,6 +1,7 @@
 import ctypes
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -20,69 +21,141 @@ RUNONCE_KEY = r"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce"
 HOSTS_BEGIN = "# STUDYLOCK-BEGIN"
 HOSTS_END = "# STUDYLOCK-END"
 MAX_BREAK_MINUTES = 10
+SITE_PACK_VERSION = 2
 
 DISTRACTING_APP_KEYWORDS = {
+    "among us",
+    "amongus",
+    "apex",
     "battle.net",
     "battlenet",
+    "baldur",
     "blizzard",
+    "cod",
+    "counter-strike",
+    "counterstrike",
+    "cs2",
+    "csgo",
+    "cyberpunk",
+    "deadbydaylight",
+    "destiny",
     "discord",
+    "dota",
     "ea app",
+    "eldenring",
     "epic",
     "facebook",
+    "fallguys",
+    "fifa",
+    "finalfantasy",
+    "footballmanager",
     "fortnite",
+    "forza",
+    "genshin",
     "gog",
+    "gta",
+    "gta5",
+    "halo",
+    "hearthstone",
+    "honkai",
     "instagram",
     "league",
+    "leagueclient",
+    "lolclient",
     "minecraft",
     "netflix",
+    "osu",
     "origin",
+    "palworld",
     "prime video",
+    "pubg",
+    "rdr2",
     "reddit",
     "riot",
     "roblox",
+    "rocketleague",
     "snapchat",
     "spotify",
+    "starrail",
+    "stardew",
     "steam",
+    "terraria",
     "telegram",
     "tiktok",
     "twitch",
     "ubisoft",
     "valorant",
-    "wallpaper",
+    "warframe",
+    "warzone",
     "xbox",
-    "youtube",
 }
 
-WEBSITE_PRESETS = [
-    "youtube.com",
+DEFAULT_BLOCKED_SITES = [
     "tiktok.com",
     "instagram.com",
     "x.com",
     "twitter.com",
+    "threads.net",
     "reddit.com",
     "twitch.tv",
+    "kick.com",
     "facebook.com",
+    "messenger.com",
     "netflix.com",
     "primevideo.com",
     "disneyplus.com",
     "hulu.com",
+    "max.com",
+    "crunchyroll.com",
+    "funimation.com",
     "9gag.com",
+    "buzzfeed.com",
     "pinterest.com",
+    "tumblr.com",
     "snapchat.com",
     "discord.com",
+    "discord.gg",
     "steampowered.com",
+    "steamcommunity.com",
     "epicgames.com",
+    "store.epicgames.com",
+    "battle.net",
+    "ea.com",
+    "ubisoft.com",
+    "riotgames.com",
+    "roblox.com",
+    "minecraft.net",
+    "xbox.com",
+    "playstation.com",
+    "ign.com",
+    "gamespot.com",
+    "polygon.com",
+    "kotaku.com",
+    "twitchtracker.com",
+    "amazon.com",
+    "ebay.com",
+    "etsy.com",
+    "temu.com",
+    "shein.com",
 ]
 
+WEBSITE_PRESETS = DEFAULT_BLOCKED_SITES
+
 IGNORED_EXE_FRAGMENTS = {
+    "adpcmencode",
     "anticheat",
     "bootstrapper",
+    "codecoverage",
+    "codegen",
     "crash",
     "diagnostic",
     "driver",
     "dxsetup",
     "eac",
+    "frcode",
     "gamesense",
+    "ggtablemigrations",
+    "gpgtar",
     "helper",
     "inject",
     "install",
@@ -92,13 +165,27 @@ IGNORED_EXE_FRAGMENTS = {
     "redist",
     "redownload",
     "reporter",
+    "resourcecompiler",
+    "prelauncher",
     "service",
     "setup",
     "sysinfo",
     "uninstall",
     "updater",
     "util",
+    "wallpaper",
     "webhelper",
+}
+
+IGNORED_EXE_NAMES = {
+    "launcher.exe",
+    "x64launcher.exe",
+    "x86launcher.exe",
+}
+
+ALWAYS_ALLOWED_SITES = {
+    "youtube.com",
+    "youtu.be",
 }
 
 
@@ -147,6 +234,113 @@ def merge_text(text: tk.Text, values: list[str]) -> None:
     text.insert("1.0", "\n".join(merged))
 
 
+def is_ignored_exe(filename: str) -> bool:
+    lower_filename = normalize_app_name(filename)
+    return lower_filename in IGNORED_EXE_NAMES or any(fragment in lower_filename for fragment in IGNORED_EXE_FRAGMENTS)
+
+
+def add_exe_candidate(matches: set[str], filename: str) -> None:
+    lower_filename = normalize_app_name(filename)
+    if not lower_filename.endswith(".exe") or is_ignored_exe(lower_filename):
+        return
+    matches.add(lower_filename)
+
+
+def quoted_value(text: str, key: str) -> str:
+    match = re.search(rf'"{re.escape(key)}"\s+"([^"]+)"', text, flags=re.IGNORECASE)
+    return match.group(1).replace("\\\\", "\\") if match else ""
+
+
+def steam_roots() -> list[Path]:
+    roots = [
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "Steam",
+        Path(os.environ.get("ProgramFiles", "")) / "Steam",
+    ]
+    appdata = os.environ.get("LOCALAPPDATA", "")
+    if appdata:
+        roots.append(Path(appdata) / "Steam")
+    return [root for root in roots if root.exists()]
+
+
+def steam_libraries() -> list[Path]:
+    libraries: set[Path] = set()
+    for root in steam_roots():
+        libraries.add(root)
+        library_file = root / "steamapps" / "libraryfolders.vdf"
+        if not library_file.exists():
+            continue
+        text = library_file.read_text(encoding="utf-8", errors="ignore")
+        for path_text in re.findall(r'"path"\s+"([^"]+)"', text, flags=re.IGNORECASE):
+            path = Path(path_text.replace("\\\\", "\\"))
+            if path.exists():
+                libraries.add(path)
+    return sorted(libraries)
+
+
+def add_game_folder_exes(matches: set[str], folder: Path, deadline: float, max_depth: int = 2) -> None:
+    if not folder.exists() or time.monotonic() > deadline:
+        return
+    base_depth = len(folder.parts)
+    for dirpath, dirnames, filenames in os.walk(folder):
+        if time.monotonic() > deadline:
+            return
+        current_depth = len(Path(dirpath).parts) - base_depth
+        if current_depth >= max_depth:
+            dirnames[:] = []
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name.lower()
+            not in {
+                "_commonredist",
+                "cache",
+                "engine",
+                "extras",
+                "logs",
+                "redist",
+                "support",
+                "temp",
+                "tmp",
+            }
+        ]
+        for filename in filenames:
+            if filename.lower().endswith(".exe"):
+                add_exe_candidate(matches, filename)
+
+
+def add_steam_games(matches: set[str], deadline: float) -> None:
+    for library in steam_libraries():
+        steamapps = library / "steamapps"
+        common = steamapps / "common"
+        if not steamapps.exists() or time.monotonic() > deadline:
+            continue
+        for manifest in steamapps.glob("appmanifest_*.acf"):
+            text = manifest.read_text(encoding="utf-8", errors="ignore")
+            install_dir = quoted_value(text, "installdir")
+            if install_dir:
+                add_game_folder_exes(matches, common / install_dir, deadline)
+
+
+def add_epic_games(matches: set[str], deadline: float) -> None:
+    program_data = os.environ.get("ProgramData", r"C:\ProgramData")
+    manifests = Path(program_data) / "Epic" / "EpicGamesLauncher" / "Data" / "Manifests"
+    if not manifests.exists():
+        return
+    for manifest in manifests.glob("*.item"):
+        if time.monotonic() > deadline:
+            return
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8", errors="ignore"))
+        except json.JSONDecodeError:
+            continue
+        launch_exe = data.get("LaunchExecutable", "")
+        if launch_exe:
+            add_exe_candidate(matches, Path(launch_exe).name)
+        install_location = data.get("InstallLocation", "")
+        if install_location:
+            add_game_folder_exes(matches, Path(install_location), deadline)
+
+
 def scan_distracting_exes() -> list[str]:
     drive_roots = [f"{letter}:\\" for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ" if Path(f"{letter}:\\").exists()]
     roots = unique_sorted(
@@ -162,6 +356,8 @@ def scan_distracting_exes() -> list[str]:
     )
     matches: set[str] = set()
     deadline = time.monotonic() + 90
+    add_steam_games(matches, deadline)
+    add_epic_games(matches, deadline)
 
     for root in roots:
         root_path = Path(root)
@@ -192,7 +388,7 @@ def scan_distracting_exes() -> list[str]:
                 lower_filename = filename.lower()
                 if not lower_filename.endswith(".exe"):
                     continue
-                if any(fragment in lower_filename for fragment in IGNORED_EXE_FRAGMENTS):
+                if is_ignored_exe(lower_filename):
                     continue
                 if any(keyword in lower_filename for keyword in DISTRACTING_APP_KEYWORDS):
                     matches.add(normalize_app_name(filename))
@@ -205,7 +401,8 @@ class StudyConfig:
     duration_minutes: int = 60
     max_break_minutes: int = MAX_BREAK_MINUTES
     blocked_apps: list[str] = field(default_factory=lambda: ["discord.exe", "steam.exe"])
-    blocked_sites: list[str] = field(default_factory=lambda: ["youtube.com", "tiktok.com"])
+    blocked_sites: list[str] = field(default_factory=lambda: DEFAULT_BLOCKED_SITES.copy())
+    site_pack_version: int = SITE_PACK_VERSION
 
     @classmethod
     def load(cls) -> "StudyConfig":
@@ -213,11 +410,16 @@ class StudyConfig:
             return cls()
         try:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            site_pack_version = int(data.get("site_pack_version", 0))
+            loaded_sites = [normalize_domain(x) for x in data.get("blocked_sites", []) if normalize_domain(x)]
+            if site_pack_version < SITE_PACK_VERSION:
+                loaded_sites = DEFAULT_BLOCKED_SITES + loaded_sites
             return cls(
                 duration_minutes=max(1, int(data.get("duration_minutes", 60))),
                 max_break_minutes=min(MAX_BREAK_MINUTES, max(1, int(data.get("max_break_minutes", data.get("break_length_minutes", MAX_BREAK_MINUTES))))),
                 blocked_apps=[normalize_app_name(x) for x in data.get("blocked_apps", []) if normalize_app_name(x)],
-                blocked_sites=[normalize_domain(x) for x in data.get("blocked_sites", []) if normalize_domain(x)],
+                blocked_sites=unique_sorted([site for site in loaded_sites if site not in ALWAYS_ALLOWED_SITES]),
+                site_pack_version=SITE_PACK_VERSION,
             )
         except Exception:
             return cls()
@@ -230,6 +432,7 @@ class StudyConfig:
                     "max_break_minutes": self.max_break_minutes,
                     "blocked_apps": self.blocked_apps,
                     "blocked_sites": self.blocked_sites,
+                    "site_pack_version": self.site_pack_version,
                 },
                 indent=2,
             ),
@@ -415,7 +618,8 @@ class StudyLockApp(tk.Tk):
             duration_minutes=max(1, int(self.duration_var.get())),
             max_break_minutes=min(MAX_BREAK_MINUTES, max(1, int(self.max_break_var.get()))),
             blocked_apps=unique_sorted(blocked_apps),
-            blocked_sites=unique_sorted(blocked_sites),
+            blocked_sites=unique_sorted([site for site in blocked_sites if site not in ALWAYS_ALLOWED_SITES]),
+            site_pack_version=SITE_PACK_VERSION,
         )
 
     def _save_form(self) -> None:
